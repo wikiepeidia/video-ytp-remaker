@@ -24,6 +24,24 @@ def describe(y, sr, n):
     return sums / np.bincount(g[keep], minlength=k)[:, None]
 
 
+def midi_describe(path, source, sr, n):
+    """Grain rows for a MIDI file in describe()'s layout: note chroma weighted by velocity, with timbre set
+    to the source's average so matching leans toward typical grains, not noise or silence."""
+    import pretty_midi  # only needed for MIDI targets
+
+    pm = pretty_midi.PrettyMIDI(str(path))
+    k = int(pm.get_end_time() * sr / n)
+    if k < 4:
+        raise ValueError(f"{path} is too short")
+    # shortcut: samples the notes at each grain's start, so a note shorter than a grain can be missed
+    times = np.arange(k) * n / sr
+    chroma = sum((i.get_chroma(times=times) for i in pm.instruments if not i.is_drum), np.zeros((12, k)))
+    if not chroma.any():
+        raise ValueError(f"{path} has no notes")
+    chroma = chroma / np.maximum(chroma.max(0), 1e-9)  # max-normalised per grain, like librosa's chroma
+    return np.column_stack([chroma.T, np.tile(source[:, 12:].mean(0), (k, 1))])
+
+
 def match(target, source, shifts=(0,)):
     """Closest source grain for every target grain, plus the semitone shift that makes it fit.
     Each shift rolls the source chroma, so a grain can match a note it only reaches after transposing."""

@@ -58,4 +58,15 @@ m = miss(notes(yr), notes(y1))
 print(f"remix: {len(yr) / SR:.2f}s, pitch miss {m:.2f} semitones")
 assert m < 1, "remix is not following the melody"
 
+import pretty_midi
+
+pm = pretty_midi.PrettyMIDI()  # same stepping melody as v1, written as notes (A3 up a semitone every 0.25 s)
+pm.instruments.append(pretty_midi.Instrument(0))
+pm.instruments[0].notes = [pretty_midi.Note(100, 57 + i, i / 4, (i + 1) / 4) for i in range(12)]
+pm.write(str(OUT / "v1.mid"))
+remix(OUT / "v1.mid", OUT / "v2.mp4", OUT / "remix_midi.mp4")
+m = miss(notes(load_audio(OUT / "remix_midi.mp4", SR)), notes(y1))
+print(f"midi remix: pitch miss {m:.2f} semitones")
+assert m < 1, "MIDI target is not being followed"
+
 print("all good, go giggle at out/")
