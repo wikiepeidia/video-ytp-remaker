@@ -27,12 +27,11 @@ def remix(target, source, out, ms=60, autotune=True):
                 raise ValueError(f"{video} has too little audio")
 
         if midi:
-            f2 = grains.describe(y2, SR, n)
-            f1 = grains.midi_describe(target, f2, SR, n)
+            mix, idx = grains.midi_remix(target, y2, SR, n, autotune)
         else:
             f1, f2 = pool.map(grains.describe, (y1, y2), (SR, SR), (n, n))
-        idx, shifts = grains.match(f1, f2, range(-6, 6) if autotune else (0,))
-        mix = grains.resynth(y2, idx, n, shifts)
+            idx, shifts = grains.match(f1, f2, range(-6, 6) if autotune else (0,))
+            mix = grains.resynth(y2, idx, n, shifts)
         sf.write(Path(tmp) / "mix.wav", mix / max(1, np.abs(mix).max()), SR)
         cut_video(tmp, frames.result(), idx, n / SR, Path(tmp) / "mix.wav", out, FPS)
 

@@ -15,3 +15,10 @@ py -3.13 -B remix.py "path/to/tune.mid" clips/speech.mp4 out/remix.mp4   # MIDI 
 
 Knobs: `--ms 30..1000` (grain size: small = autotune mush, big = sentence mixing), `--no-autotune` (no key shifting).
 Best results when video 2 is long and varied (a monologue beats 10 s of one vowel).
+
+With a MIDI target, the remix plays voiced grains from the source video at the
+written pitches and octaves. It keeps note timing, rests, and chords. MIDI drum
+tracks, instrument sounds, pitch bends, and sustain pedal are skipped. Use a
+MIDI with just the melody track if you want a single voice. Clear, sustained
+vowels work well as the source. For a remix that follows the sound of the
+original recording, use that recording as the target.

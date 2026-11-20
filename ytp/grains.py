@@ -24,22 +24,77 @@ def describe(y, sr, n):
     return sums / np.bincount(g[keep], minlength=k)[:, None]
 
 
-def midi_describe(path, source, sr, n):
-    """Grain rows for a MIDI file in describe()'s layout: note chroma weighted by velocity, with timbre set
-    to the source's average so matching leans toward typical grains, not noise or silence."""
-    import pretty_midi  # only needed for MIDI targets
+def midi_remix(path, y, sr, n, autotune=True):
+    """Play pitched source grains at the MIDI note pitches and timings."""
+    import pretty_midi
 
     pm = pretty_midi.PrettyMIDI(str(path))
-    k = int(pm.get_end_time() * sr / n)
-    if k < 4:
-        raise ValueError(f"{path} is too short")
-    # shortcut: samples the notes at each grain's start, so a note shorter than a grain can be missed
-    times = np.arange(k) * n / sr
-    chroma = sum((i.get_chroma(times=times) for i in pm.instruments if not i.is_drum), np.zeros((12, k)))
-    if not chroma.any():
-        raise ValueError(f"{path} has no notes")
-    chroma = chroma / np.maximum(chroma.max(0), 1e-9)  # max-normalised per grain, like librosa's chroma
-    return np.column_stack([chroma.T, np.tile(source[:, 12:].mean(0), (k, 1))])
+    notes = [note for track in pm.instruments if not track.is_drum for note in track.notes]
+    if not notes:
+        raise ValueError(f"{path} has no pitched notes")
+
+    # YIN always returns a pitch, including for silence and consonants. Rank
+    # grains by how well their waveform actually repeats at the estimated pitch.
+    samples = y[:len(y) // n * n].reshape(-1, n)
+    hz = librosa.yin(y[n // 2:], fmin=65, fmax=1200, sr=sr, frame_length=2048, hop_length=n)
+    periods = sr / hz[:len(samples)]
+    quality = np.zeros(len(samples))
+    for i, (sample, period) in enumerate(zip(samples, periods)):
+        lag = round(period)
+        if 2 * period > n - 1:
+            continue
+        a, b = sample[:-lag], sample[lag:]
+        energy = np.dot(a, a) + np.dot(b, b)
+        if energy > 0:
+            quality[i] = max(0, 2 * np.dot(a, b) / energy) * min(1, np.sqrt(energy / (2 * len(a))) / 0.03)
+    voiced = np.flatnonzero(quality >= 0.35)
+    if not len(voiced):
+        raise ValueError("Source audio has no clearly voiced grains for MIDI")
+
+    pitches = librosa.hz_to_midi(hz[voiced])
+    selected = {}
+    for pitch in {note.pitch for note in notes}:
+        distance = np.abs(pitches - pitch)
+        cost = distance * (0.04 if autotune else 1.0) + (1 - quality[voiced])
+        best = np.argmin(cost)
+        selected[pitch] = voiced[best], 2 ** ((pitch - pitches[best]) / 12) if autotune else 1.0
+
+    duration = max(1, round(pm.get_end_time() * sr))
+    mix = np.zeros(duration)
+    idx = np.full((duration + n - 1) // n, -1, dtype=int)
+    prominence = np.zeros(len(idx))
+    for note in notes:
+        start, end = round(note.start * sr), round(note.end * sr)
+        if end <= start:
+            continue
+        j, speed = selected[note.pitch]
+        sample, period = samples[j], periods[j]
+        # Loop at a whole number of periods. Blend one period across the seam
+        # to keep waveform changes in the original speech from creating clicks.
+        loop = (int((n - 1) / period) - 1) * period
+        pos = (np.arange(end - start) * speed) % loop
+        grid = np.arange(n)
+        signal = np.interp(pos, grid, sample)
+        blend = pos < period
+        weight = pos[blend] / period
+        signal[blend] = weight * signal[blend] + (1 - weight) * np.interp(pos[blend] + loop, grid, sample)
+        fade = min(round(sr * 0.005), len(signal) // 2)
+        if fade:
+            ramp = np.linspace(0, 1, fade, endpoint=False)
+            signal[:fade] *= ramp
+            signal[-fade:] *= ramp[::-1]
+        mix[start:end] += signal * (note.velocity / 127)
+
+        cells = np.arange(start // n, (end - 1) // n + 1)
+        weight = note.velocity * (np.minimum(end, (cells + 1) * n) - np.maximum(start, cells * n))
+        update = weight > prominence[cells]
+        idx[cells[update]] = j
+        prominence[cells[update]] = weight[update]
+
+    # During rests, keep showing the most recent source grain.
+    active = np.where(idx >= 0, np.arange(len(idx)), 0)
+    idx[0] = max(0, idx[0])
+    return mix, idx[np.maximum.accumulate(active)]
 
 
 def match(target, source, shifts=(0,)):

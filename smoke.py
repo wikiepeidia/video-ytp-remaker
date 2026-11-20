@@ -63,9 +63,16 @@ import pretty_midi
 pm = pretty_midi.PrettyMIDI()  # same stepping melody as v1, written as notes (A3 up a semitone every 0.25 s)
 pm.instruments.append(pretty_midi.Instrument(0))
 pm.instruments[0].notes = [pretty_midi.Note(100, 57 + i, i / 4, (i + 1) / 4) for i in range(12)]
+pm.instruments[0].notes += [pretty_midi.Note(100, 81, 3.25, 3.30)]
 pm.write(str(OUT / "v1.mid"))
 remix(OUT / "v1.mid", OUT / "v2.mp4", OUT / "remix_midi.mp4")
-m = miss(notes(load_audio(OUT / "remix_midi.mp4", SR)), notes(y1))
+midi_audio = load_audio(OUT / "remix_midi.mp4", SR)
+m = np.median(np.abs(notes(midi_audio[:3 * SR]) - notes(y1[:3 * SR])))
+assert np.max(np.abs(midi_audio[int(3.06 * SR):int(3.19 * SR)])) < 0.01, "MIDI rest contains audio"
+short_note = midi_audio[int(3.25 * SR):int(3.30 * SR)]
+assert len(short_note) == int(3.30 * SR) - int(3.25 * SR), "short MIDI note was truncated"
+assert np.sqrt(np.mean(short_note ** 2)) > 0.05, "short MIDI note was skipped"
+assert abs(np.median(notes(short_note)[1:-1]) - 81) < 1, "short MIDI note has the wrong octave"
 print(f"midi remix: pitch miss {m:.2f} semitones")
 assert m < 1, "MIDI target is not being followed"
 
