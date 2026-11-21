@@ -78,6 +78,10 @@ def midi_remix(path, y, sr, n, autotune=True):
         blend = pos < period
         weight = pos[blend] / period
         signal[blend] = weight * signal[blend] + (1 - weight) * np.interp(pos[blend] + loop, grid, sample)
+        # Different vowels can have very different levels. Give MIDI velocity
+        # a consistent starting level while limiting gain on quiet samples.
+        rms = np.sqrt(np.mean(signal ** 2))
+        signal *= min(3.0, 0.12 / max(rms, 1e-6))
         fade = min(round(sr * 0.005), len(signal) // 2)
         if fade:
             ramp = np.linspace(0, 1, fade, endpoint=False)
@@ -122,3 +126,17 @@ def resynth(y, idx, n, shifts):
         pos = j * n + n / 2 + (np.arange(m) - m / 2) * 2 ** (s / 12)  # read faster = higher pitch
         out[i * n : i * n + m] += np.interp(pos, t, y, left=0, right=0) * win
     return out[f // 2 : f // 2 + len(idx) * n]
+
+
+def follow_dynamics(mix, target, sr):
+    """Follow the target's short-time loudness with smoothly changing gain."""
+    hop = max(1, round(sr * 0.01))
+    starts = np.arange(0, len(mix), hop)
+    lengths = np.minimum(hop, len(mix) - starts)
+    def rms(signal):
+        power = np.add.reduceat(np.square(signal[:len(mix)], dtype=float), starts)
+        return np.sqrt(power / lengths)
+
+    gain = np.minimum(3.0, rms(target) / np.maximum(rms(mix), 1e-6))
+    centers = starts + (lengths - 1) / 2
+    return mix * np.interp(np.arange(len(mix)), centers, gain)
